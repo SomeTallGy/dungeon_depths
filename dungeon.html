@@ -235,8 +235,8 @@ const BOSS_DEF = {
 // type, name, char, col, value (hp restored / atk bonus / def bonus), price (gold cost)
 const ITEM_DEFS = [
   { type:'potion', name:'Minor Potion',   ch:'!', col:'#f4f', val:20, price: 15 },
-  { type:'potion', name:'Health Potion',  ch:'!', col:'#f0f', val:40, price: 30 },
-  { type:'potion', name:'Max Potion',     ch:'!', col:'#d0d', val:80, price: 55 },
+  { type:'potion', name:'Health Potion',  ch:'‼', col:'#f0f', val:40, price: 30 },
+  { type:'potion', name:'Max Potion',     ch:'¶', col:'#d0d', val:80, price: 55 },
   { type:'weapon', name:'Dagger',         ch:'/', col:'#fa8', val: 2, minD:1, price: 20 },
   { type:'weapon', name:'Short Sword',    ch:'/', col:'#fb2', val: 4, minD:2, price: 42 },
   { type:'weapon', name:'Long Sword',     ch:'/', col:'#fc0', val: 6, minD:4, price: 72 },
@@ -338,7 +338,7 @@ function showTutorial() {
       <div><span style="color:#555">#</span> &nbsp;Wall</div>
       <div><span style="color:#2a2a2a">.</span> &nbsp;Floor</div>
       <div><span style="color:#eee">&gt;</span> &nbsp;Stairs down</div>
-      <div><span style="color:#f4f">!</span> &nbsp;Potion</div>
+      <div><span style="color:#f4f">!</span><span style="color:#f0f">‼</span><span style="color:#d0d">¶</span> &nbsp;Potion</div>
       <div><span style="color:#fa8">/</span> &nbsp;Weapon</div>
       <div><span style="color:#a75">]</span> &nbsp;Armor</div>
       <div><span style="color:#fb0">$</span> &nbsp;Gold</div>
