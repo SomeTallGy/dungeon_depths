@@ -317,6 +317,13 @@ const ENEMY_DEFS = [
   { name:'Dragon',   ch:'D', col:'#f50', hp:65,  atk:16, def: 7, xp:120,  minD:8 },
 ];
 
+const BOSS_DEF = {
+  name:'Hollow King', ch:'K', col:'#6af',
+  hp:160, maxHp:160, atk:22, def:8, xp:300,
+  regen:2, phase2Atk:26, phase2Col:'#f66',
+  phase2Threshold:80, isBoss:true,
+};
+
 const ITEM_DEFS = [
   { type:'potion', name:'Minor Potion',  ch:'!', col:'#f4f', val:20, price: 15 },
   { type:'potion', name:'Health Potion', ch:'!', col:'#f0f', val:40, price: 30 },
@@ -480,8 +487,27 @@ function buildFloor() {
   const sx = lr.x + (lr.w>>1), sy = lr.y + (lr.h>>1);
   G.map[sy][sx] = TILE.STAIRS;
 
-  for (let i = 1; i < G.rooms.length; i++) populate(G.rooms[i]);
-  placeNPC();
+  if (G.depth === 10) {
+    G.bossDefeated = false;
+    const bossPos = freeInRoom(lr);
+    if (bossPos) {
+      G.enemies.push({
+        ...BOSS_DEF,
+        hp: BOSS_DEF.hp, maxHp: BOSS_DEF.maxHp,
+        phase2: false,
+        x: bossPos.x, y: bossPos.y,
+        id: ++_id, awake: false,
+      });
+    }
+    for (let i = 1; i < G.rooms.length - 1; i++) {
+      const pos = freeInRoom(G.rooms[i]);
+      if (pos) placeItem(pos.x, pos.y);
+    }
+    placeNPC();
+  } else {
+    for (let i = 1; i < G.rooms.length; i++) populate(G.rooms[i]);
+    placeNPC();
+  }
 }
 
 function carve(r) {
@@ -785,7 +811,23 @@ function strikeEnemy(en) {
   const d = dmg(G.p, en);
   en.hp -= d;
   addFlash(en.id);
+  if (en.isBoss && !en.phase2 && en.hp <= en.phase2Threshold && en.hp > 0) {
+    en.phase2 = true;
+    en.atk = en.phase2Atk;
+    en.col = en.phase2Col;
+    msg(`<b style="color:#f66">The Hollow King shatters — his true form tears free. His strikes grow frenzied!</b>`, 'warn');
+  }
   if (en.hp <= 0) {
+    if (en.isBoss) {
+      G.bossDefeated = true;
+      msg(`<b style="color:#c80">The Hollow King collapses. The dungeon shudders.</b>`, 'good');
+      msg(`The stairs are unsealed. You may now descend.`, 'info');
+      G.p.xp += en.xp;
+      G.enemies = G.enemies.filter(e=>e.id!==en.id);
+      addDeath(en.x, en.y);
+      levelUp();
+      endTurn(); return;
+    }
     msg(`You slay the ${en.name}! <span style="color:#c80">(+${en.xp} XP)</span>`, 'good');
     G.p.xp += en.xp;
     G.enemies = G.enemies.filter(e=>e.id!==en.id);
@@ -914,7 +956,13 @@ function openStairsPrompt() {
 function descend() {
   if (G.over) return;
   removeOverlay();
-  if (G.depth>=10) { G.won=true; G.over=true; showEnd(); return; }
+  if (G.depth>=10) {
+    if (!G.bossDefeated) {
+      msg('The stairs are sealed. The Hollow King must fall first.', 'warn');
+      return;
+    }
+    G.won=true; G.over=true; showEnd(); return;
+  }
   G.depth++;
   msg(`You descend to floor ${G.depth}…`, 'warn');
   buildFloor(); fov(); draw();
@@ -923,7 +971,7 @@ function descend() {
 
 function waitTurn() {
   if (G.over) return;
-  if (G.turns%4===0 && G.p.hp<G.p.maxHp) {
+  if (G.turns%10===0 && G.p.hp<G.p.maxHp) {
     G.p.hp=Math.min(G.p.hp+1, G.p.maxHp);
   }
   endTurn();
@@ -933,6 +981,9 @@ function waitTurn() {
 function enemyTurns() {
   for (const e of G.enemies) {
     if (G.over) return;
+    if (e.isBoss && e.awake && e.hp > 0 && e.hp < e.maxHp) {
+      e.hp = Math.min(e.hp + e.regen, e.maxHp);
+    }
     const dx=G.p.x-e.x, dy=G.p.y-e.y;
     const dist=Math.abs(dx)+Math.abs(dy);
 
@@ -996,8 +1047,24 @@ function renderShop() {
     <div style="color:#777;margin-bottom:14px;font-size:12px">
       Your gold: <span style="color:#fb0">${p.gold}g</span>
     </div>
-    <div style="text-align:left;margin-bottom:16px">
+    <div style="text-align:left;margin-bottom:12px">
       ${npc.stock.length ? rows.join('') : '<div style="color:#555;padding:12px 0;text-align:center">Sold out!</div>'}
+    </div>
+    <div style="border-top:1px solid #2a2a2a;padding-top:8px;margin-bottom:16px">
+      <div class="shop-item${p.gold>=25?'':' cant-afford'}" onclick="rerollShop()">
+        <span style="color:#555;min-width:22px">[R]</span>
+        <span style="color:#c80;min-width:14px">*</span>
+        <span style="flex:1">Reroll Wares</span>
+        <span style="color:#666;margin-right:12px;font-size:11px">New stock</span>
+        <span style="color:${p.gold>=25?'#fb0':'#554'}">25g</span>
+      </div>
+      <div class="shop-item${p.gold>=15?'':' cant-afford'}" onclick="gambleItem()">
+        <span style="color:#555;min-width:22px">[G]</span>
+        <span style="color:#f8a;min-width:14px">?</span>
+        <span style="flex:1">Mystery Item</span>
+        <span style="color:#666;margin-right:12px;font-size:11px">Any tier</span>
+        <span style="color:${p.gold>=15?'#fb0':'#554'}">15g</span>
+      </div>
     </div>
     <button class="btn" style="width:100%" onclick="removeOverlay()">[Esc] Leave</button>
   </div>`;
@@ -1033,13 +1100,49 @@ function buyItem(i) {
   draw();
 }
 
+function rerollShop() {
+  const npc = G.npc, p = G.p;
+  if (p.gold < 25) { msg('Not enough gold to reroll. (need 25g)', 'warn'); renderShop(); return; }
+  p.gold -= 25;
+  npc.stock = generateStock();
+  msg(`${npc.name} reshuffles the wares.`, 'info');
+  renderShop(); draw();
+}
+
+function gambleItem() {
+  const npc = G.npc, p = G.p;
+  if (p.gold < 15) { msg('Not enough gold to gamble. (need 15g)', 'warn'); renderShop(); return; }
+  p.gold -= 15;
+  const pool = ITEM_DEFS.filter(i => i.type !== 'gold');
+  const def = pool[rand(0, pool.length - 1)];
+  const item = { ...def, id: ++_id };
+  if (item.type === 'potion') {
+    if (p.inv.length >= MAX_INV) {
+      G.items.push({ ...item, x: npc.x, y: npc.y });
+      msg(`You gamble and receive a <span style="color:${item.col}">${item.name}</span> — pack is full! It falls to the floor.`, 'warn');
+    } else {
+      p.inv.push(item);
+      msg(`You gamble and receive a <span style="color:${item.col}">${item.name}</span>!`, 'loot');
+    }
+  } else if (item.type === 'weapon') {
+    const old = p.weapon; p.weapon = item;
+    if (old) { G.items.push({ ...old, x: npc.x, y: npc.y, id: ++_id }); }
+    msg(`You gamble and receive a <span style="color:${item.col}">${item.name}</span>!${old ? ' Old weapon dropped.' : ''}`, 'loot');
+  } else if (item.type === 'armor') {
+    const old = p.armor; p.armor = item;
+    if (old) { G.items.push({ ...old, x: npc.x, y: npc.y, id: ++_id }); }
+    msg(`You gamble and receive a <span style="color:${item.col}">${item.name}</span>!${old ? ' Old armor dropped.' : ''}`, 'loot');
+  }
+  renderShop(); draw();
+}
+
 // ─── Overlays ─────────────────────────────────────────────────────────────────
 function showEnd() {
   const p=G.p;
   if (G.won) {
     showOverlay(
       '<span style="color:#c80">VICTORY!</span>',
-      'You conquered the Dungeon Depths!',
+      'The Hollow King is slain. The dungeon is free.',
       `Level ${p.lv} &bull; ${G.turns} turns &bull; ${p.gold}g collected`,
       [['New Game','newGame()']]
     );
@@ -1115,6 +1218,8 @@ document.addEventListener('keydown', e => {
   const ov = document.getElementById('overlay');
   if (ov && ov.dataset.shop) {
     if (e.key === 'Escape') { removeOverlay(); return; }
+    if (e.key === 'r' || e.key === 'R') { rerollShop(); return; }
+    if (e.key === 'g' || e.key === 'G') { gambleItem(); return; }
     const n = parseInt(e.key);
     if (!isNaN(n) && n >= 1 && e.location !== 3) { buyItem(n - 1); return; }
     return;

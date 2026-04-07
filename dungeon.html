@@ -180,6 +180,7 @@ body {
       <div class="stat-row"><span class="stat-label">Gold</span>  <span class="stat-value" id="s-gold"></span></div>
       <div class="stat-row"><span class="stat-label">Floor</span> <span class="stat-value" id="s-floor"></span></div>
       <div class="stat-row"><span class="stat-label">Turns</span> <span class="stat-value" id="s-turns"></span></div>
+      <div id="s-god"></div>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-title">Equipment</div>
@@ -223,6 +224,13 @@ const ENEMY_DEFS = [
   { name:'Lich',     ch:'L', col:'#a6f', hp:35,  atk:13, def: 5, xp:80,   minD:7 },
   { name:'Dragon',   ch:'D', col:'#f50', hp:65,  atk:16, def: 7, xp:120,  minD:8 },
 ];
+
+const BOSS_DEF = {
+  name:'Hollow King', ch:'K', col:'#6af',
+  hp:160, maxHp:160, atk:22, def:8, xp:300,
+  regen:2, phase2Atk:26, phase2Col:'#f66',
+  phase2Threshold:80, isBoss:true,
+};
 
 // type, name, char, col, value (hp restored / atk bonus / def bonus), price (gold cost)
 const ITEM_DEFS = [
@@ -320,7 +328,7 @@ function showTutorial() {
 
     <div style="color:#c80;font-size:10px;letter-spacing:2px;margin-bottom:8px">COMBAT</div>
     <div style="font-size:12px;color:#bbb;margin-bottom:18px;line-height:1.8">
-      <b style="color:#ccc">Walk into an enemy to attack.</b> Combat is turn-based — every move or action you take lets every visible enemy act too. Kill enemies to earn XP and level up, gaining HP and attack. Resting heals 1&nbsp;HP every 4 turns.
+      <b style="color:#ccc">Walk into an enemy to attack.</b> Combat is turn-based — every move or action you take lets every visible enemy act too. Kill enemies to earn XP and level up, gaining HP and attack. Resting heals 1&nbsp;HP every 10 turns — enemies hunt your last known position for ~10 turns if you flee.
     </div>
 
     <div style="color:#c80;font-size:10px;letter-spacing:2px;margin-bottom:8px">SYMBOLS</div>
@@ -356,7 +364,7 @@ function newGame() {
   G = {
     map: [], explored: [], visible: [],
     rooms: [], enemies: [], items: [],
-    depth: 1, turns: 0, over: false, won: false, flashing: new Map(), dying: [], npc: null,
+    depth: 1, turns: 0, over: false, won: false, god: false, flashing: new Map(), dying: [], npc: null, bossDefeated: false,
     log: [],
     p: {
       x:0, y:0,
@@ -405,9 +413,31 @@ function buildFloor() {
   const sx = lr.x + (lr.w>>1), sy = lr.y + (lr.h>>1);
   G.map[sy][sx] = TILE.STAIRS;
 
-  // Populate rooms 1+
-  for (let i = 1; i < G.rooms.length; i++) populate(G.rooms[i]);
-  placeNPC();
+  // Populate rooms
+  if (G.depth === 10) {
+    // Boss floor: no regular enemies — Hollow King alone in last room
+    G.bossDefeated = false;
+    const bossPos = freeInRoom(lr);
+    if (bossPos) {
+      G.enemies.push({
+        ...BOSS_DEF,
+        hp: BOSS_DEF.hp, maxHp: BOSS_DEF.maxHp,
+        phase2: false,
+        x: bossPos.x, y: bossPos.y,
+        id: ++_id, awake: false,
+        huntTurns: 0, lastKnownX: null, lastKnownY: null,
+      });
+    }
+    // Items in middle rooms for last-chance prep
+    for (let i = 1; i < G.rooms.length - 1; i++) {
+      const pos = freeInRoom(G.rooms[i]);
+      if (pos) placeItem(pos.x, pos.y);
+    }
+    placeNPC();
+  } else {
+    for (let i = 1; i < G.rooms.length; i++) populate(G.rooms[i]);
+    placeNPC();
+  }
 }
 
 function carve(r) {
@@ -449,6 +479,7 @@ function populate(room) {
       x:pos.x, y:pos.y,
       id: ++_id,
       awake: false,
+      huntTurns: 0, lastKnownX: null, lastKnownY: null,
     });
   }
   // Items
@@ -460,6 +491,7 @@ function populate(room) {
 }
 
 let _id = 0;
+let _cheatBuf = '';
 
 function placeItem(x, y, forceType) {
   let def;
@@ -669,6 +701,7 @@ function sidebar() {
   document.getElementById('s-gold').textContent  = p.gold+'g';
   document.getElementById('s-floor').textContent = G.depth+' / 10';
   document.getElementById('s-turns').textContent = G.turns;
+  document.getElementById('s-god').innerHTML = G.god ? '<div style="color:#ff0;font-size:11px;letter-spacing:1px;margin-top:4px">⚡ GOD MODE</div>' : '';
 
   document.getElementById('s-equip').innerHTML = `
     <div class="stat-row"><span class="stat-label">Weapon</span>
@@ -723,19 +756,37 @@ function strikeEnemy(en) {
   const d = dmg(G.p, en);
   en.hp -= d;
   addFlash(en.id);
+  // Phase 2 transition for boss
+  if (en.isBoss && !en.phase2 && en.hp <= en.phase2Threshold && en.hp > 0) {
+    en.phase2 = true;
+    en.atk = en.phase2Atk;
+    en.col = en.phase2Col;
+    msg(`<b style="color:#f66">The Hollow King shatters — his true form tears free. His strikes grow frenzied!</b>`, 'warn');
+  }
   if (en.hp <= 0) {
-    msg(`You slay the ${en.name}! <span style="color:#c80">(+${en.xp} XP)</span>`, 'good');
-    G.p.xp += en.xp;
-    G.enemies = G.enemies.filter(e=>e.id!==en.id);
-    addDeath(en.x, en.y);
-    if (Math.random()<0.3) placeItem(en.x, en.y);
-    levelUp();
+    if (en.isBoss) {
+      G.bossDefeated = true;
+      msg(`<b style="color:#c80">The Hollow King collapses. The dungeon shudders. A thousand years of silence finally end.</b>`, 'good');
+      msg(`The stairs are unsealed. You may now descend.`, 'info');
+      G.p.xp += en.xp;
+      G.enemies = G.enemies.filter(e=>e.id!==en.id);
+      addDeath(en.x, en.y);
+      levelUp();
+    } else {
+      msg(`You slay the ${en.name}! <span style="color:#c80">(+${en.xp} XP)</span>`, 'good');
+      G.p.xp += en.xp;
+      G.enemies = G.enemies.filter(e=>e.id!==en.id);
+      addDeath(en.x, en.y);
+      if (Math.random()<0.3) placeItem(en.x, en.y);
+      levelUp();
+    }
   } else {
     msg(`You hit the <span style="color:${en.col}">${en.name}</span> for <b>${d}</b> dmg. (${en.hp}hp)`, 'combat');
   }
 }
 
 function strikePlayer(en) {
+  if (G.god) return;
   const d = dmg(en, G.p);
   G.p.hp -= d;
   addFlash('player');
@@ -829,7 +880,7 @@ function useInvItem(i) {
 
 function openStairsPrompt() {
   removeOverlay();
-  const dest = G.depth >= 10 ? 'your victory!' : `floor ${G.depth + 1}`;
+  const dest = G.depth >= 10 ? 'your destiny' : `floor ${G.depth + 1}`;
   const ov = document.createElement('div');
   ov.className = 'overlay'; ov.id = 'overlay'; ov.dataset.stairs = '1';
   ov.innerHTML = `<div class="obox">
@@ -846,7 +897,13 @@ function openStairsPrompt() {
 function descend() {
   if (G.over) return;
   removeOverlay();
-  if (G.depth>=10) { G.won=true; G.over=true; showEnd(); return; }
+  if (G.depth >= 10) {
+    if (!G.bossDefeated) {
+      msg('The stairs are sealed by a dark force. The Hollow King must be defeated first.', 'warn');
+      return;
+    }
+    G.won = true; G.over = true; showEnd(); return;
+  }
   G.depth++;
   msg(`You descend to floor ${G.depth}…`, 'warn');
   buildFloor(); fov(); draw();
@@ -855,7 +912,7 @@ function descend() {
 
 function waitTurn() {
   if (G.over) return;
-  if (G.turns%4===0 && G.p.hp<G.p.maxHp) {
+  if (G.turns%10===0 && G.p.hp<G.p.maxHp) {
     G.p.hp=Math.min(G.p.hp+1, G.p.maxHp);
   }
   endTurn();
@@ -865,16 +922,38 @@ function waitTurn() {
 function enemyTurns() {
   for (const e of G.enemies) {
     if (G.over) return;
-    const dx=G.p.x-e.x, dy=G.p.y-e.y;
-    const dist=Math.abs(dx)+Math.abs(dy);
+    const visible = !!G.visible[e.y][e.x];
 
-    if (!G.visible[e.y][e.x]) { e.awake=false; continue; }
-    e.awake=true;
-
-    if (dist<=1) {
-      strikePlayer(e);
+    if (visible) {
+      e.awake = true;
+      e.lastKnownX = G.p.x;
+      e.lastKnownY = G.p.y;
+      e.huntTurns = 10;
+    } else if (e.awake && e.huntTurns > 0) {
+      e.huntTurns--;
+      if (e.huntTurns <= 0) e.awake = false;
     } else {
-      // Move toward player, prefer dominant axis
+      e.awake = false;
+      continue;
+    }
+
+    // Boss regen (fires while awake or hunting)
+    if (e.isBoss && e.regen && e.hp < e.maxHp) {
+      e.hp = Math.min(e.hp + e.regen, e.maxHp);
+      if (visible && G.turns % 5 === 0)
+        msg(`The Hollow King regenerates <b>${e.regen}</b> HP. (${e.hp}/${e.maxHp})`, 'warn');
+    }
+
+    const targetX = visible ? G.p.x : e.lastKnownX;
+    const targetY = visible ? G.p.y : e.lastKnownY;
+    if (targetX === null) continue;
+
+    const dx = targetX - e.x, dy = targetY - e.y;
+    const dist = Math.abs(dx) + Math.abs(dy);
+
+    if (dist <= 1 && visible) {
+      strikePlayer(e);
+    } else if (dist > 0) {
       const pref = Math.abs(dx)>=Math.abs(dy)
         ? [[Math.sign(dx),0],[0,Math.sign(dy)],[0,-Math.sign(dy)],[-Math.sign(dx),0]]
         : [[0,Math.sign(dy)],[Math.sign(dx),0],[-Math.sign(dx),0],[0,-Math.sign(dy)]];
@@ -885,6 +964,11 @@ function enemyTurns() {
         if (G.enemies.some(o=>o!==e&&o.x===nx&&o.y===ny)) continue;
         if (nx===G.p.x&&ny===G.p.y) continue;
         e.x=nx; e.y=ny; break;
+      }
+      // Reached last known position but player gone — go dormant
+      if (!visible && e.x === e.lastKnownX && e.y === e.lastKnownY) {
+        e.awake = false;
+        e.huntTurns = 0;
       }
     }
   }
@@ -931,8 +1015,24 @@ function renderShop() {
     <div style="color:#777;margin-bottom:16px;font-size:12px">
       Your gold: <span style="color:#fb0">${p.gold}g</span>
     </div>
-    <div style="text-align:left;margin-bottom:20px">
+    <div style="text-align:left;margin-bottom:12px">
       ${npc.stock.length ? rows.join('') : '<div style="color:#555;padding:14px 0;text-align:center">Sold out!</div>'}
+    </div>
+    <div style="border-top:1px solid #2a2a2a;padding-top:8px;margin-bottom:16px">
+      <div class="shop-item${p.gold>=25?'':' cant-afford'}" onclick="rerollShop()">
+        <span style="color:#555;min-width:22px">[R]</span>
+        <span style="color:#c80;min-width:14px">*</span>
+        <span style="flex:1">Reroll Wares</span>
+        <span style="color:#666;margin-right:14px;font-size:11px">New stock</span>
+        <span style="color:${p.gold>=25?'#fb0':'#554'}">25g</span>
+      </div>
+      <div class="shop-item${p.gold>=15?'':' cant-afford'}" onclick="gambleItem()">
+        <span style="color:#555;min-width:22px">[G]</span>
+        <span style="color:#f8a;min-width:14px">?</span>
+        <span style="flex:1">Mystery Item</span>
+        <span style="color:#666;margin-right:14px;font-size:11px">Any tier</span>
+        <span style="color:${p.gold>=15?'#fb0':'#554'}">15g</span>
+      </div>
     </div>
     <button class="btn" onclick="removeOverlay()">[Esc] Leave</button>
   </div>`;
@@ -968,13 +1068,49 @@ function buyItem(i) {
   draw();
 }
 
+function rerollShop() {
+  const npc = G.npc, p = G.p;
+  if (p.gold < 25) { msg('Not enough gold to reroll. (need 25g)', 'warn'); renderShop(); return; }
+  p.gold -= 25;
+  npc.stock = generateStock();
+  msg(`${npc.name} reshuffles the wares.`, 'info');
+  renderShop(); draw();
+}
+
+function gambleItem() {
+  const npc = G.npc, p = G.p;
+  if (p.gold < 15) { msg('Not enough gold to gamble. (need 15g)', 'warn'); renderShop(); return; }
+  p.gold -= 15;
+  const pool = ITEM_DEFS.filter(i => i.type !== 'gold');
+  const def = pool[rand(0, pool.length - 1)];
+  const item = { ...def, id: ++_id };
+  if (item.type === 'potion') {
+    if (p.inv.length >= MAX_INV) {
+      G.items.push({ ...item, x: npc.x, y: npc.y });
+      msg(`You gamble and receive a <span style="color:${item.col}">${item.name}</span> — pack is full! It falls to the floor.`, 'warn');
+    } else {
+      p.inv.push(item);
+      msg(`You gamble and receive a <span style="color:${item.col}">${item.name}</span>!`, 'loot');
+    }
+  } else if (item.type === 'weapon') {
+    const old = p.weapon; p.weapon = item;
+    if (old) { G.items.push({ ...old, x: npc.x, y: npc.y, id: ++_id }); }
+    msg(`You gamble and receive a <span style="color:${item.col}">${item.name}</span>!${old ? ' Old weapon dropped.' : ''}`, 'loot');
+  } else if (item.type === 'armor') {
+    const old = p.armor; p.armor = item;
+    if (old) { G.items.push({ ...old, x: npc.x, y: npc.y, id: ++_id }); }
+    msg(`You gamble and receive a <span style="color:${item.col}">${item.name}</span>!${old ? ' Old armor dropped.' : ''}`, 'loot');
+  }
+  renderShop(); draw();
+}
+
 // ─── Overlays ─────────────────────────────────────────────────────────────────
 function showEnd() {
   const p=G.p;
   if (G.won) {
     showOverlay(
       '<span style="color:#c80">VICTORY!</span>',
-      'You conquered the Dungeon Depths!',
+      'The Hollow King is slain. The dungeon is free.',
       `Level ${p.lv} &bull; ${G.turns} turns &bull; ${p.gold}g collected`,
       [['New Game','newGame()']]
     );
@@ -1003,9 +1139,9 @@ function showHelp() {
       <b style="color:#c80">Tips</b><br>
       Bump into enemies to attack them<br>
       Weapons/armor auto-equip on pickup<br>
-      Resting heals 1 HP every 4 turns<br>
-      Enemies only move when you can see them<br>
-      Reach floor 10 and descend to win!
+      Resting heals 1 HP every 10 turns<br>
+      Enemies hunt you for ~10 turns after losing sight<br>
+      Reach floor 10, defeat the Hollow King, and descend!
     </div>`,
     [['Close','removeOverlay()']]
   );
@@ -1034,6 +1170,8 @@ document.addEventListener('keydown', e => {
   const ov = document.getElementById('overlay');
   if (ov && ov.dataset.shop) {
     if (e.key === 'Escape') { removeOverlay(); return; }
+    if (e.key === 'r' || e.key === 'R') { rerollShop(); return; }
+    if (e.key === 'g' || e.key === 'G') { gambleItem(); return; }
     const n = parseInt(e.key);
     if (!isNaN(n) && n >= 1 && e.location !== 3) { buyItem(n - 1); return; }
     return;
@@ -1050,6 +1188,25 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (ov && !G.over) { removeOverlay(); return; }
+
+  // Cheat codes
+  if (e.key.length === 1) {
+    _cheatBuf = (_cheatBuf + e.key.toLowerCase()).slice(-4);
+    if (_cheatBuf === 'next' && !G.over) {
+      _cheatBuf = '';
+      if (G.depth >= 10) { G.bossDefeated = true; G.won = true; G.over = true; showEnd(); return; }
+      G.depth++;
+      msg(`[CHEAT] Skipped to floor ${G.depth}.`, 'warn');
+      buildFloor(); fov(); draw(); showLore(G.depth);
+      return;
+    }
+    if (_cheatBuf.slice(-3) === 'god' && !G.over) {
+      G.god = !G.god;
+      msg(`God mode ${G.god ? 'ON ⚡' : 'OFF'}.`, 'warn');
+      draw();
+    }
+  }
+
   switch(e.key) {
     case 'ArrowUp':   case 'w': case 'W': case 'k': e.preventDefault(); move(0,-1);  break;
     case 'ArrowDown': case 's': case 'S': case 'j': e.preventDefault(); move(0,1);   break;
