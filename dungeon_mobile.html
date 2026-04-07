@@ -338,6 +338,16 @@ const ITEM_DEFS = [
   { type:'gold',   name:'Gold Coins',    ch:'$', col:'#fb0', val: 0 },
 ];
 
+// ─── Gamble flavor text (tiered by item price) ────────────────────────────────
+const GAMBLE_QUIPS = [
+  // low tier (price <= 30): junk, commons
+  ["Found it in a ditch. Cleaned up most of it.", "A beggar left it behind. Didn't fight me for it.", "Fell off a cart. No one came looking.", "Had it under the counter. Happy to be rid of it.", "Scraped it off the floor. Still functions."],
+  // mid tier (price <= 60): decent gear
+  ["Pried it off a soldier. He was nearly finished with it.", "Former owner settled a debt. In full.", "Came off a man who owed me money. We're square.", "Someone left it behind in a hurry.", "A mercenary traded it for passage out. Didn't get far."],
+  // high tier (price > 60): rare, impressive
+  ["Took it off a knight. He'd finished with it.", "A lord had this commissioned. The lord is a memory now.", "Stripped from an adventurer who came back in parts.", "Belonged to someone important. Past tense.", "Was bound for a general's vault. The general had other plans."]
+];
+
 // ─── Lore ─────────────────────────────────────────────────────────────────────
 const FLOOR_LORE = [
   { title:'Into the Dark',
@@ -1113,7 +1123,10 @@ function gambleItem() {
   const npc = G.npc, p = G.p;
   if (p.gold < 15) { msg('Not enough gold to gamble. (need 15g)', 'warn'); renderShop(); return; }
   p.gold -= 15;
-  const pool = ITEM_DEFS.filter(i => i.type !== 'gold');
+  const d = G.depth;
+  // 20% chance to draw from up to 2 floors ahead; otherwise floor-appropriate only
+  const maxD = Math.random() < 0.2 ? d + 2 : d;
+  const pool = ITEM_DEFS.filter(i => i.type !== 'gold' && (i.minD||1) <= maxD);
   const def = pool[rand(0, pool.length - 1)];
   const item = { ...def, id: ++_id };
   if (item.type === 'potion') {
@@ -1133,8 +1146,31 @@ function gambleItem() {
     if (old) { G.items.push({ ...old, x: npc.x, y: npc.y, id: ++_id }); }
     msg(`You gamble and receive a <span style="color:${item.col}">${item.name}</span>!${old ? ' Old armor dropped.' : ''}`, 'loot');
   }
-  renderShop(); draw();
+  showGambleResult(item, npc.name); draw();
 }
+
+function showGambleResult(item, npcName) {
+  removeOverlay();
+  const tier = item.price <= 30 ? 0 : item.price <= 60 ? 1 : 2;
+  const quips = GAMBLE_QUIPS[tier];
+  const quip = quips[rand(0, quips.length - 1)];
+  const stat = item.type==='potion' ? `${item.val} HP`
+             : item.type==='weapon' ? `+${item.val} ATK` : `+${item.val} DEF`;
+  const ov = document.createElement('div');
+  ov.className = 'overlay'; ov.id = 'overlay';
+  ov.dataset.gamble = '1';
+  ov.innerHTML = `<div class="obox" style="max-width:360px">
+    <div class="otitle" style="color:#0cd;font-size:20px">@ ${npcName}</div>
+    <div class="osub" style="font-style:italic;color:#888;margin-bottom:24px">"${quip}"</div>
+    <div style="font-size:36px;margin-bottom:10px"><span style="color:${item.col}">${item.ch}</span></div>
+    <div style="color:#ccc;font-size:15px;margin-bottom:4px">${item.name}</div>
+    <div style="color:#555;font-size:12px;margin-bottom:28px">${stat}</div>
+    <button class="btn" onclick="closeGamble()">Take it</button>
+  </div>`;
+  document.body.appendChild(ov);
+}
+
+function closeGamble() { removeOverlay(); renderShop(); }
 
 // ─── Overlays ─────────────────────────────────────────────────────────────────
 function showEnd() {
@@ -1224,6 +1260,7 @@ document.addEventListener('keydown', e => {
     if (!isNaN(n) && n >= 1 && e.location !== 3) { buyItem(n - 1); return; }
     return;
   }
+  if (ov && ov.dataset.gamble) { closeGamble(); return; }
   if (ov && ov.dataset.stairs) {
     if (e.key === 'y' || e.key === 'Y' || e.key === 'Enter') { descend(); return; }
     if (e.key === 'n' || e.key === 'N' || e.key === 'Escape') { removeOverlay(); return; }
