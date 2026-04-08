@@ -724,13 +724,6 @@ function renderShop() {
       ${npc.stock.length ? rows.join('') : '<div style="color:#555;padding:14px 0;text-align:center">Sold out!</div>'}
     </div>
     <div style="border-top:1px solid #2a2a2a;padding-top:8px;margin-bottom:16px">
-      <div class="shop-item${p.gold>=25?'':' cant-afford'}" onclick="rerollShop()">
-        <span style="color:#555;min-width:22px">[R]</span>
-        <span style="color:#c80;min-width:14px">*</span>
-        <span style="flex:1">Reroll Wares</span>
-        <span style="color:#666;margin-right:14px;font-size:11px">New stock</span>
-        <span style="color:${p.gold>=25?'#fb0':'#554'}">25g</span>
-      </div>
       <div class="shop-item${p.gold>=15?'':' cant-afford'}" onclick="gambleItem()">
         <span style="color:#555;min-width:22px">[G]</span>
         <span style="color:#f8a;min-width:14px">?</span>
@@ -773,14 +766,6 @@ function buyItem(i) {
   draw();
 }
 
-function rerollShop() {
-  const npc = G.npc, p = G.p;
-  if (p.gold < 25) { msg('Not enough gold to reroll. (need 25g)', 'warn'); renderShop(); return; }
-  p.gold -= 25;
-  npc.stock = generateStock();
-  msg(`${npc.name} reshuffles the wares.`, 'info');
-  renderShop(); draw();
-}
 
 function gambleItem() {
   const npc = G.npc, p = G.p;

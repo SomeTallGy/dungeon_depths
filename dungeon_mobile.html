@@ -492,7 +492,7 @@ document.addEventListener('keydown', e => {
   const ov = document.getElementById('overlay');
   if (ov && ov.dataset.shop) {
     if (e.key === 'Escape') { removeOverlay(); return; }
-    if (e.key === 'r' || e.key === 'R') { rerollShop(); return; }
+
     if (e.key === 'g' || e.key === 'G') { gambleItem(); return; }
     const n = parseInt(e.key);
     if (!isNaN(n) && n >= 1 && e.location !== 3) { buyItem(n - 1); return; }
