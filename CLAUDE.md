@@ -24,3 +24,5 @@ Terse, dark, dry. Lore entries 2-3 sentences max. No heroic clichés.
 
 ## Tools
 Use playwright MCP for all browser automation. Never write raw node scripts that require('playwright'). Save all output to `.playwright-output/`.
+Playwright global path: C:\Users\User\AppData\Roaming\npm\node_modules\playwright
+Always require() using this full path in any node scripts.
