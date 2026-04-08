@@ -238,7 +238,7 @@ function newGame() {
   G = {
     map: [], explored: [], visible: [],
     rooms: [], enemies: [], items: [],
-    depth: 1, turns: 0, over: false, won: false, god: false, flashing: new Map(), dying: [], npc: null, bossDefeated: false,
+    depth: 1, turns: 0, over: false, won: false, god: false, flashing: new Map(), dying: [], npc: null, bossDefeated: false, gasTiles: new Set(),
     log: [],
     p: {
       x:0, y:0,
@@ -265,6 +265,7 @@ function buildFloor() {
   G.enemies  = [];
   G.items    = [];
   G.npc      = null;
+  G.gasTiles = new Set();
 
   for (let attempt = 0; attempt < 200 && G.rooms.length < MAX_ROOMS; attempt++) {
     const rw = rand(MIN_RS, MAX_RS), rh = rand(MIN_RS, MAX_RS);
@@ -286,6 +287,15 @@ function buildFloor() {
   const lr = G.rooms[G.rooms.length-1];
   const sx = lr.x + (lr.w>>1), sy = lr.y + (lr.h>>1);
   G.map[sy][sx] = TILE.STAIRS;
+
+  // Mark a poison gas room on floor 5
+  if (G.depth === 5 && G.rooms.length > 2) {
+    const mid = G.rooms.slice(1, -1);
+    const gr = mid[rand(0, mid.length - 1)];
+    for (let gy = gr.y; gy < gr.y + gr.h; gy++)
+      for (let gx = gr.x; gx < gr.x + gr.w; gx++)
+        if (G.map[gy][gx] === TILE.FLOOR) G.gasTiles.add(`${gx},${gy}`);
+  }
 
   // Populate rooms
   if (G.depth === 10) {
@@ -683,6 +693,11 @@ function enemyTurns() {
 
 function endTurn() {
   enemyTurns();
+  if (!G.god && !G.over && G.gasTiles.has(`${G.p.x},${G.p.y}`)) {
+    G.p.hp -= 1;
+    msg(`<span style="color:#4a4">Poison gas burns your lungs.</span> (-1 HP)`, 'warn');
+    if (G.p.hp <= 0) { G.p.hp = 0; G.over = true; }
+  }
   G.turns++;
   fov();
   if (G.npc && !G.npc.greeted && G.visible[G.npc.y][G.npc.x]) {

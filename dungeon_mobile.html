@@ -359,7 +359,11 @@ function cell(x, y) {
 
   if (tile===TILE.STAIRS) return span('>', vis?CELL.stair_v:CELL.stair_e);
   if (tile===TILE.WALL)   return span('#', vis?CELL.wall_v :CELL.wall_e);
-  if (tile===TILE.FLOOR)  return span('.', vis?CELL.floor_v:CELL.floor_e);
+  if (tile===TILE.FLOOR) {
+    if (G.gasTiles.has(`${x},${y}`))
+      return span('.', vis?'#3a5a2a':'#1a2a1a', vis?'0 0 3px #2a4a1a':null);
+    return span('.', vis?CELL.floor_v:CELL.floor_e);
+  }
   return span(' ','#000');
 }
 
