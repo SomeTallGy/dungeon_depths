@@ -168,6 +168,23 @@ function addLevelFlash() {
   }
 }
 
+function goldSparkle(x, y, ch, col) {
+  const mapEl = document.getElementById('map');
+  if (!mapEl) return;
+  const r = mapEl.getBoundingClientRect();
+  const cw = r.width / W, ch_ = r.height / H;
+  const el = document.createElement('div');
+  el.className = 'gold-sparkle';
+  el.textContent = ch;
+  el.style.color = col;
+  el.style.textShadow = `0 0 6px ${col}, 0 0 12px ${col}`;
+  el.style.left = (r.left + (x + 0.5) * cw) + 'px';
+  el.style.top  = (r.top  + y * ch_ - 10) + 'px';
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 700);
+}
+
+
 function addDeath(x, y) {
   G.dying.push({ x, y, start: Date.now() });
   if (!_flashRaf) _flashLoop();
@@ -581,7 +598,14 @@ function move(dx, dy) {
   }
 
   const it = G.items.find(i=>i.x===nx&&i.y===ny);
-  if (it) msg(`You see a <span style="color:${it.col}">${it.name}</span>. (G to pick up)`, 'info');
+  if (it && it.type==='gold') {
+    G.p.gold += it.val;
+    G.items = G.items.filter(i=>i.id!==it.id);
+    goldSparkle(nx, ny, '$', '#fb0');
+    msg(`You pocket <span style="color:#fb0">${it.val} gold coins</span>.`, 'loot');
+  } else if (it) {
+    msg(`You see a <span style="color:${it.col}">${it.name}</span>. (G to pick up)`, 'info');
+  }
   if (G.map[ny][nx]===TILE.STAIRS) openStairsPrompt();
 
   endTurn();
@@ -595,12 +619,13 @@ function pickup() {
   if (it.type==='gold') {
     G.p.gold += it.val;
     G.items = G.items.filter(i=>i.id!==it.id);
+    goldSparkle(G.p.x, G.p.y, '$', '#fb0');
     msg(`You pocket <span style="color:#fb0">${it.val} gold coins</span>.`, 'loot');
   } else if (it.type==='weapon') {
     const old = G.p.weapon;
     G.p.weapon = it;
     G.items = G.items.filter(i=>i.id!==it.id);
-    if (old) {
+        if (old) {
       G.items.push({...old, x:G.p.x, y:G.p.y, id:++_id});
       msg(`You swap <span style="color:#fa8">${old.name}</span> for <span style="color:${it.col}">${it.name}</span> (+${it.val} atk).`, 'loot');
     } else {
@@ -610,7 +635,7 @@ function pickup() {
     const old = G.p.armor;
     G.p.armor = it;
     G.items = G.items.filter(i=>i.id!==it.id);
-    if (old) {
+        if (old) {
       G.items.push({...old, x:G.p.x, y:G.p.y, id:++_id});
       msg(`You swap <span style="color:#a75">${old.name}</span> for <span style="color:${it.col}">${it.name}</span> (+${it.val} def).`, 'loot');
     } else {
@@ -620,7 +645,7 @@ function pickup() {
     if (G.p.inv.length>=MAX_INV) { msg('Inventory full! (max '+MAX_INV+')', 'warn'); return; }
     G.p.inv.push(it);
     G.items = G.items.filter(i=>i.id!==it.id);
-    msg(`You stow the <span style="color:${it.col}">${it.name}</span>.`, 'loot');
+        msg(`You stow the <span style="color:${it.col}">${it.name}</span>.`, 'loot');
   }
   draw();
 }

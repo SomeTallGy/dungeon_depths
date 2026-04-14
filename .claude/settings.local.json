@@ -6,7 +6,8 @@
       "Bash(echo \"Server PID: $!\")",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8765/dungeon.html)",
       "mcp__playwright__browser_take_screenshot",
-      "mcp__playwright__browser_press_key"
+      "mcp__playwright__browser_press_key",
+      "Bash(grep -n \"p\\\\.gold\\\\|\\\\.gold\\\\b\\\\|'\\\\\\\\$'\\\\|\\\\\"\\\\\\\\\\\\$\\\\\"\\\\|GOLD\\\\|type.*'g'\\\\|'g'.*type\" \"c:/Users/User/Desktop/roguelike/dungeon_depths/dungeon.html\")"
     ]
   }
 }

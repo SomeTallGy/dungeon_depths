@@ -114,6 +114,19 @@ body {
 .msg.info  { color: #88a; }
 .msg.warn  { color: #ec6; }
 .msg.level { color: #fc0; font-weight: bold; }
+@keyframes gold-sparkle {
+  0%   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1);    }
+  60%  { opacity: 1; transform: translateX(-50%) translateY(-18px) scale(1.2); }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-32px) scale(0.8); }
+}
+.gold-sparkle {
+  position: fixed;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  pointer-events: none;
+  animation: gold-sparkle 0.65s ease-out forwards;
+  z-index: 100;
+}
 @keyframes lvup-float {
   0%   { opacity: 1; transform: translateX(-50%) translateY(0);     }
   100% { opacity: 0; transform: translateX(-50%) translateY(-30px); }
