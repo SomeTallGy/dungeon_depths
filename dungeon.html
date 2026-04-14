@@ -253,6 +253,16 @@ function cell(x,y) {
     const fc = flashColor('levelup') || flashColor('player');
     return fc ? span('@', fc, `0 0 10px ${fc}`) : span('@','#ff0','0 0 5px #fc0');
   }
+  if (vis && G.slashAnims.length) {
+    const sl = G.slashAnims.find(s => s.path.some(p => p[0]===x && p[1]===y));
+    if (sl) {
+      const frame = Math.floor((Date.now() - sl.start) / SLASH_FRAME_MS);
+      const idx   = sl.path.findIndex(p => p[0]===x && p[1]===y);
+      if (idx === frame)     return span(sl.ch, '#fff', '0 0 8px #fff');
+      if (idx === frame - 1) return span(sl.ch, '#666', null);
+    }
+  }
+
   if (vis && G.lvPulse && tile === TILE.FLOOR) {
     const elapsed = Date.now() - G.lvPulse.start;
     const ring = Math.floor(elapsed / 120);

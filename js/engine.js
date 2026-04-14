@@ -112,6 +112,9 @@ const DEATH_FRAMES = [
 ];
 const DEATH_FRAME_MS = 80;
 
+const SLASH_FRAME_MS = 60;
+const SLASH_TOTAL_FRAMES = 4; // 3 path cells + 1 trailing frame = 240ms
+
 const CELL = {
   wall_v:  '#555',
   wall_e:  '#2a2a2a',
@@ -170,13 +173,24 @@ function addDeath(x, y) {
   if (!_flashRaf) _flashLoop();
 }
 
+function addSlash(x, y) {
+  const backslash = Math.random() < 0.5;
+  G.slashAnims.push({
+    path: backslash ? [[x-1,y-1],[x,y],[x+1,y+1]] : [[x+1,y-1],[x,y],[x-1,y+1]],
+    ch:   backslash ? '\\' : '/',
+    start: Date.now()
+  });
+  if (!_flashRaf) _flashLoop();
+}
+
 function _flashLoop() {
   draw();
   const now = Date.now();
   for (const [id, end] of G.flashing) if (now >= end) G.flashing.delete(id);
   G.dying = G.dying.filter(d => now < d.start + DEATH_FRAME_MS * DEATH_FRAMES.length);
+  G.slashAnims = G.slashAnims.filter(s => now < s.start + SLASH_FRAME_MS * SLASH_TOTAL_FRAMES);
   if (G.lvPulse && now - G.lvPulse.start >= 600) G.lvPulse = null;
-  if (G.flashing.size > 0 || G.dying.length > 0 || G.lvPulse) {
+  if (G.flashing.size > 0 || G.dying.length > 0 || G.slashAnims.length > 0 || G.lvPulse) {
     _flashRaf = requestAnimationFrame(_flashLoop);
   } else {
     _flashRaf = null;
@@ -262,7 +276,7 @@ function newGame() {
   G = {
     map: [], explored: [], visible: [],
     rooms: [], enemies: [], items: [],
-    depth: 1, turns: 0, over: false, won: false, god: false, flashing: new Map(), dying: [], npc: null, bossDefeated: false, gasTiles: new Set(), lvPulse: null,
+    depth: 1, turns: 0, over: false, won: false, god: false, flashing: new Map(), dying: [], slashAnims: [], npc: null, bossDefeated: false, gasTiles: new Set(), lvPulse: null,
     log: [],
     p: {
       x:0, y:0,
@@ -490,7 +504,8 @@ function dmg(attacker, defender) {
 function strikeEnemy(en) {
   const d = dmg(G.p, en);
   en.hp -= d;
-  addFlash(en.id);
+  addSlash(en.x, en.y);
+  setTimeout(() => { if (!G.over) addFlash(en.id); }, SLASH_FRAME_MS * SLASH_TOTAL_FRAMES);
   // Phase 2 transition for boss
   if (en.isBoss && !en.phase2 && en.hp <= en.phase2Threshold && en.hp > 0) {
     en.phase2 = true;
