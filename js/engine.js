@@ -276,7 +276,7 @@ function newGame() {
   G = {
     map: [], explored: [], visible: [],
     rooms: [], enemies: [], items: [],
-    depth: 1, turns: 0, over: false, won: false, god: false, flashing: new Map(), dying: [], slashAnims: [], npc: null, bossDefeated: false, gasTiles: new Set(), lvPulse: null,
+    depth: 1, turns: 0, over: false, won: false, god: false, flashing: new Map(), dying: [], slashAnims: [], npc: null, bossDefeated: false, gasTiles: new Set(), lvPulse: null, bloodTiles: new Map(),
     log: [],
     p: {
       x:0, y:0,
@@ -302,8 +302,9 @@ function buildFloor() {
   G.rooms    = [];
   G.enemies  = [];
   G.items    = [];
-  G.npc      = null;
-  G.gasTiles = new Set();
+  G.npc        = null;
+  G.gasTiles   = new Set();
+  G.bloodTiles = new Map();
 
   for (let attempt = 0; attempt < 200 && G.rooms.length < MAX_ROOMS; attempt++) {
     const rw = rand(MIN_RS, MAX_RS), rh = rand(MIN_RS, MAX_RS);
@@ -570,6 +571,14 @@ function move(dx, dy) {
   if (G.map[ny][nx]===TILE.WALL) return;
 
   G.p.x=nx; G.p.y=ny;
+
+  if (G.p.hp / G.p.maxHp <= 0.35 && Math.random() < 0.5) {
+    const bch  = ['·','·',',',"'"][Math.floor(Math.random()*4)];
+    const bcol = ['#6a0000','#7a0808','#580000','#880010'][Math.floor(Math.random()*4)];
+    const key  = `${nx},${ny}`;
+    G.bloodTiles.set(key, { ch: bch, col: bcol });
+    if (G.bloodTiles.size > 120) G.bloodTiles.delete(G.bloodTiles.keys().next().value);
+  }
 
   const it = G.items.find(i=>i.x===nx&&i.y===ny);
   if (it) msg(`You see a <span style="color:${it.col}">${it.name}</span>. (G to pick up)`, 'info');

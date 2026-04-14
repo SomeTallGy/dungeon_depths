@@ -292,6 +292,8 @@ function cell(x,y) {
   if (tile===TILE.FLOOR) {
     if (G.gasTiles.has(`${x},${y}`))
       return span('.', vis?'#3a5a2a':'#1a2a1a', vis?'0 0 3px #2a4a1a':null);
+    const bt = G.bloodTiles.get(`${x},${y}`);
+    if (bt) return span(bt.ch, vis ? bt.col : '#3a0000');
     return span('.', vis?CELL.floor_v:CELL.floor_e);
   }
   return span(' ','#000');
