@@ -147,6 +147,24 @@ function addFlash(id) {
   if (!_flashRaf) _flashLoop();
 }
 
+function addLevelFlash() {
+  G.flashing.set('levelup', Date.now() + 800);
+  G.lvPulse = { start: Date.now(), x: G.p.x, y: G.p.y };
+  if (!_flashRaf) _flashLoop();
+  const mapEl = document.getElementById('map');
+  if (mapEl) {
+    const r = mapEl.getBoundingClientRect();
+    const cw = r.width / W, ch = r.height / H;
+    const el = document.createElement('div');
+    el.className = 'lvup-text';
+    el.textContent = 'LEVEL UP';
+    el.style.left = (r.left + (G.p.x + 0.5) * cw) + 'px';
+    el.style.top  = (r.top  + G.p.y * ch - 18) + 'px';
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1200);
+  }
+}
+
 function addDeath(x, y) {
   G.dying.push({ x, y, start: Date.now() });
   if (!_flashRaf) _flashLoop();
@@ -157,7 +175,8 @@ function _flashLoop() {
   const now = Date.now();
   for (const [id, end] of G.flashing) if (now >= end) G.flashing.delete(id);
   G.dying = G.dying.filter(d => now < d.start + DEATH_FRAME_MS * DEATH_FRAMES.length);
-  if (G.flashing.size > 0 || G.dying.length > 0) {
+  if (G.lvPulse && now - G.lvPulse.start >= 600) G.lvPulse = null;
+  if (G.flashing.size > 0 || G.dying.length > 0 || G.lvPulse) {
     _flashRaf = requestAnimationFrame(_flashLoop);
   } else {
     _flashRaf = null;
@@ -168,7 +187,12 @@ function _flashLoop() {
 function flashColor(id) {
   const end = G.flashing.get(id);
   if (!end) return null;
-  const slot = Math.floor((350 - (end - Date.now())) / 70);
+  const dur = id === 'levelup' ? 800 : 350;
+  const slot = Math.max(0, Math.floor((dur - (end - Date.now())) / 70));
+  if (id === 'levelup') {
+    const cols = ['#fc0','#fff','#ff8','#fc0'];
+    return cols[slot % cols.length];
+  }
   return slot % 2 === 0 ? '#fff' : '#f44';
 }
 
@@ -238,7 +262,7 @@ function newGame() {
   G = {
     map: [], explored: [], visible: [],
     rooms: [], enemies: [], items: [],
-    depth: 1, turns: 0, over: false, won: false, god: false, flashing: new Map(), dying: [], npc: null, bossDefeated: false, gasTiles: new Set(),
+    depth: 1, turns: 0, over: false, won: false, god: false, flashing: new Map(), dying: [], npc: null, bossDefeated: false, gasTiles: new Set(), lvPulse: null,
     log: [],
     p: {
       x:0, y:0,
@@ -513,6 +537,7 @@ function levelUp() {
     G.p.maxHp += 8; G.p.hp = Math.min(G.p.hp+8, G.p.maxHp);
     G.p.baseAtk += 1;
     msg(`⬆ Level ${G.p.lv}! Max HP +8, Attack +1.`, 'level');
+    addLevelFlash();
   }
 }
 
