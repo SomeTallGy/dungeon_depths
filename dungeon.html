@@ -441,7 +441,11 @@ document.addEventListener('keydown', e => {
     if (!isNaN(n) && n >= 1 && e.location !== 3) { buyItem(n - 1); return; }
     return;
   }
-  if (ov && ov.dataset.gamble) { closeGamble(); return; }
+  if (ov && ov.dataset.gamble) {
+    if (e.key === 'y' || e.key === 'Y' || e.key === 'Enter') { confirmGamble(); return; }
+    if (e.key === 'n' || e.key === 'N' || e.key === 'Escape') { declineGamble(); return; }
+    return;
+  }
   if (ov && ov.dataset.stairs) {
     if (e.key === 'y' || e.key === 'Y' || e.key === 'Enter') { descend(); return; }
     if (e.key === 'n' || e.key === 'N' || e.key === 'Escape') { removeOverlay(); return; }
