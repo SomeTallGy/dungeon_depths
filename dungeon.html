@@ -263,7 +263,7 @@ function cell(x,y) {
     return vis ? span('@', '#0cd', '0 0 7px #0cd') : span('@', '#1a4a4a');
   }
   if (x===G.p.x && y===G.p.y) {
-    const fc = flashColor('levelup') || flashColor('player');
+    const fc = flashColor('levelup') || flashColor('potion') || flashColor('player');
     return fc ? span('@', fc, `0 0 10px ${fc}`) : span('@','#ff0','0 0 5px #fc0');
   }
   if (vis && G.slashAnims.length) {

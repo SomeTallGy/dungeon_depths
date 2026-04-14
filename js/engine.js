@@ -144,14 +144,24 @@ function span(ch, col, shadow) {
     : `<span style="color:${col}">${esc(ch)}</span>`;
 }
 
+function lerpColor(a, b, t) {
+  const expand = s => { const h=s.replace('#',''); return h.length===3?h.split('').map(c=>c+c).join(''):h; };
+  const p = s => parseInt(expand(s), 16);
+  const ac = p(a), bc = p(b);
+  const r  = Math.round(((ac>>16)&0xff) + (((bc>>16)&0xff) - ((ac>>16)&0xff)) * t);
+  const g  = Math.round(((ac>>8) &0xff) + (((bc>>8) &0xff) - ((ac>>8) &0xff)) * t);
+  const bl = Math.round((ac&0xff)       + ((bc&0xff)        - (ac&0xff))       * t);
+  return `#${((1<<24)|(r<<16)|(g<<8)|bl).toString(16).slice(1)}`;
+}
+
 // ─── Flash & Death ────────────────────────────────────────────────────────────
-function addFlash(id) {
-  G.flashing.set(id, Date.now() + 350);
+function addFlash(id, col) {
+  G.flashing.set(id, { end: Date.now() + 350, col: col || null });
   if (!_flashRaf) _flashLoop();
 }
 
 function addLevelFlash() {
-  G.flashing.set('levelup', Date.now() + 800);
+  G.flashing.set('levelup', { end: Date.now() + 800, col: null });
   G.lvPulse = { start: Date.now(), x: G.p.x, y: G.p.y };
   if (!_flashRaf) _flashLoop();
   const mapEl = document.getElementById('map');
@@ -168,7 +178,7 @@ function addLevelFlash() {
   }
 }
 
-function goldSparkle(x, y, ch, col) {
+function itemSparkle(x, y, ch, col) {
   const mapEl = document.getElementById('map');
   if (!mapEl) return;
   const r = mapEl.getBoundingClientRect();
@@ -203,7 +213,7 @@ function addSlash(x, y) {
 function _flashLoop() {
   draw();
   const now = Date.now();
-  for (const [id, end] of G.flashing) if (now >= end) G.flashing.delete(id);
+  for (const [id, f] of G.flashing) if (now >= f.end) G.flashing.delete(id);
   G.dying = G.dying.filter(d => now < d.start + DEATH_FRAME_MS * DEATH_FRAMES.length);
   G.slashAnims = G.slashAnims.filter(s => now < s.start + SLASH_FRAME_MS * SLASH_TOTAL_FRAMES);
   if (G.lvPulse && now - G.lvPulse.start >= 600) G.lvPulse = null;
@@ -216,14 +226,20 @@ function _flashLoop() {
 }
 
 function flashColor(id) {
-  const end = G.flashing.get(id);
-  if (!end) return null;
-  const dur = id === 'levelup' ? 800 : 350;
-  const slot = Math.max(0, Math.floor((dur - (end - Date.now())) / 70));
+  const f = G.flashing.get(id);
+  if (!f) return null;
+  const dur = (id === 'levelup' || id === 'potion') ? 800 : 350;
+  const slot = Math.max(0, Math.floor((dur - (f.end - Date.now())) / 70));
   if (id === 'levelup') {
     const cols = ['#fc0','#fff','#ff8','#fc0'];
     return cols[slot % cols.length];
   }
+  if (id === 'potion') {
+    const elapsed = 800 - (f.end - Date.now());
+    const t = Math.sin(Math.PI * Math.max(0, Math.min(1, elapsed / 800)));
+    return lerpColor('#ffdd00', f.col, t);
+  }
+  if (f.col) return slot % 2 === 0 ? '#fff' : f.col;
   return slot % 2 === 0 ? '#fff' : '#f44';
 }
 
@@ -601,7 +617,7 @@ function move(dx, dy) {
   if (it && it.type==='gold') {
     G.p.gold += it.val;
     G.items = G.items.filter(i=>i.id!==it.id);
-    goldSparkle(nx, ny, '$', '#fb0');
+    itemSparkle(nx, ny, '$', '#fb0');
     msg(`You pocket <span style="color:#fb0">${it.val} gold coins</span>.`, 'loot');
   } else if (it) {
     msg(`You see a <span style="color:${it.col}">${it.name}</span>. (G to pick up)`, 'info');
@@ -619,7 +635,7 @@ function pickup() {
   if (it.type==='gold') {
     G.p.gold += it.val;
     G.items = G.items.filter(i=>i.id!==it.id);
-    goldSparkle(G.p.x, G.p.y, '$', '#fb0');
+    itemSparkle(G.p.x, G.p.y, '$', '#fb0');
     msg(`You pocket <span style="color:#fb0">${it.val} gold coins</span>.`, 'loot');
   } else if (it.type==='weapon') {
     const old = G.p.weapon;
@@ -658,6 +674,9 @@ function useInvItem(i) {
     const heal = Math.min(it.val, G.p.maxHp-G.p.hp);
     G.p.hp += heal;
     G.p.inv.splice(i,1);
+    G.flashing.set('potion', { end: Date.now() + 800, col: it.col });
+    if (!_flashRaf) _flashLoop();
+    itemSparkle(G.p.x, G.p.y, it.ch, it.col);
     msg(`You quaff the <span style="color:${it.col}">${it.name}</span> and recover <b>${heal}</b> HP.`, 'good');
     endTurn();
   }
