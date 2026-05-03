@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Kerath — Weather</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: #060e0c; overflow: hidden; touch-action: none; }
+  canvas { display: block; }
+  #controls {
+    position: fixed; bottom: 28px; right: 20px;
+    display: flex; gap: 12px; z-index: 10;
+  }
+  #controls button {
+    width: 56px; height: 56px;
+    background: rgba(30,60,45,0.75);
+    border: 1px solid rgba(60,110,80,0.5);
+    border-radius: 8px;
+    color: rgba(80,160,110,0.9);
+    font: bold 22px "Courier New", monospace;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+  #controls button:active { background: rgba(50,100,70,0.9); }
+  #viewlabel {
+    position: fixed; top: 16px; left: 16px;
+    font: 11px "Courier New", monospace;
+    color: rgba(70,130,90,0.7);
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="controls">
+  <button id="btn-ccw">&#8634;</button>
+  <button id="btn-cw">&#8635;</button>
+</div>
+<div id="viewlabel">VIEW: NE — TAP to reveal</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+const W = window.innerWidth;
+const H = window.innerHeight;
+canvas.width = W; canvas.height = H;
+
+const PAL = {
+  sky:     '#060e0c',
+  fog:     ['#09120f','#101b17','#16241f','#1c2e26'],
+  fogL:    ['#070e0b','#0c1511','#111d18','#17251e'],
+  fogR:    ['#040a08','#08100d','#0d1713','#121e18'],
+  top:     ['#152219','#1d3025','#273f30','#31503c'],
+  grid:    'rgba(0,0,0,0.5)',
+  gridExp: 'rgba(0,0,0,0.3)',
+};
+const TW = 64, TH = 32, BH = 20, BASE_SIDE = 4, S = 40;
+
+// ── RNG / TERRAIN / FOG ───────────────────────────────────────────────────────
+function rng(seed) {
+  let s = seed >>> 0;
+  return () => { s=Math.imul(s^(s>>>15),s|1); s^=s+Math.imul(s^(s>>>7),s|61); return((s^(s>>>14))>>>0)/0xffffffff; };
+}
+function genTerrain() {
+  const h=[];
+  for (let r=0;r<S;r++){h[r]=[];for(let c=0;c<S;c++){let v=0;v+=Math.sin(c*.20+.7)*Math.cos(r*.17+1.1)*1.9;v+=Math.sin((c+r)*.26+.4)*1.4;v+=Math.sin(c*.53+r*.46+2.3)*.55;v+=Math.cos(c*.11-r*.14+3.1)*.7;h[r][c]=Math.max(0,Math.min(3,Math.round(v+1.1)));}}
+  return h;
+}
+const TERRAIN = genTerrain();
+const revealProgress = Array.from({length:S},()=>new Float32Array(S));
+function revealTile(tc,tr){if(tc>=0&&tc<S&&tr>=0&&tr<S&&revealProgress[tr][tc]===0)revealProgress[tr][tc]=0.001;}
+function revealRadius(tc,tr,rad){for(let r=tr-rad;r<=tr+rad;r++)for(let c=tc-rad;c<=tc+rad;c++)if(Math.sqrt((c-tc)**2+(r-tr)**2)<=rad)revealTile(c,r);}
+revealRadius(5,4,5);
+
+// ── TILE TEXTURES ─────────────────────────────────────────────────────────────
+const texCache = new Map();
+function generateTexture(c,r) {
+  const key=`${c},${r}`; if(texCache.has(key))return texCache.get(key);
+  const e=TERRAIN[r][c],rand=rng(c*97+r*1009+e*7),oc=new OffscreenCanvas(TW,TH),ox=oc.getContext('2d');
+  ox.beginPath();ox.moveTo(TW/2,0);ox.lineTo(TW,TH/2);ox.lineTo(TW/2,TH);ox.lineTo(0,TH/2);ox.closePath();
+  ox.fillStyle=PAL.top[e];ox.fill();ox.save();ox.clip();
+  for(let i=0;i<18+Math.floor(rand()*22)+e*8;i++){ox.beginPath();ox.arc(rand()*TW,rand()*TH,.6+rand()*1.1,0,Math.PI*2);const a=.08+rand()*.12;ox.fillStyle=rand()>.5?`rgba(120,180,140,${a})`:`rgba(0,0,0,${a+.05})`;ox.fill();}
+  for(let i=0;i<(e===0?1:e);i++){const x1=rand()*TW,y1=rand()*TH,x2=x1+(rand()-.5)*18,y2=y1+(rand()-.5)*10;ox.beginPath();ox.moveTo(x1,y1);ox.quadraticCurveTo((x1+x2)/2+(rand()-.5)*6,(y1+y2)/2+(rand()-.5)*4,x2,y2);ox.strokeStyle=`rgba(0,0,0,${.15+rand()*.1})`;ox.lineWidth=.5;ox.stroke();}
+  if(e>=2)for(let i=0;i<e-1;i++){const x1=rand()*TW,y1=rand()*TH,x2=x1+(rand()-.5)*20,y2=y1+(rand()-.5)*10;ox.beginPath();ox.moveTo(x1,y1);ox.lineTo(x2,y2);ox.strokeStyle=`rgba(180,130,40,${.18+rand()*.14})`;ox.lineWidth=.8+rand()*.6;ox.stroke();}
+  ox.restore();texCache.set(key,oc);return oc;
+}
+
+// ── SPRITE HELPERS ────────────────────────────────────────────────────────────
+const P = 2;
+function px(ox,x,y,w,h,col){ox.fillStyle=col;ox.fillRect(x*P,y*P,w*P,h*P);}
+function makeSprite(gW,gH,drawFn,anchorX,anchorY){
+  const oc=new OffscreenCanvas(gW*P,gH*P); drawFn(oc.getContext('2d'));
+  return{canvas:oc,anchorX,anchorY};
+}
+
+// ── STATIC SPRITES ────────────────────────────────────────────────────────────
+const sprFrond = makeSprite(14,20,ox=>{
+  px(ox,6,14,2,6,'#1e3828');px(ox,6,11,2,4,'#2a5040');
+  px(ox,2,8,4,2,'#3a7a5a');px(ox,1,6,3,2,'#3a7a5a');px(ox,3,4,3,2,'#2d6048');px(ox,4,10,2,2,'#3a7a5a');
+  px(ox,8,7,4,2,'#3a7a5a');px(ox,9,5,3,2,'#3a7a5a');px(ox,8,9,3,2,'#2d6048');
+  px(ox,7,3,2,2,'#4a9a6a');px(ox,6,1,2,3,'#4a9a6a');px(ox,6,0,2,1,'#5aaa7a');
+  px(ox,3,8,1,1,'#5aaa7a');px(ox,9,6,1,1,'#5aaa7a');
+}, 14*P/2, 20*P);
+
+const sprRuin = makeSprite(12,22,ox=>{
+  px(ox,1,18,10,4,'#1e2a22');px(ox,0,19,1,3,'#18221a');px(ox,11,19,1,3,'#18221a');
+  px(ox,3,8,6,11,'#243028');px(ox,2,9,1,10,'#1e2820');px(ox,3,8,6,1,'#2e3e32');
+  px(ox,3,4,2,4,'#243028');px(ox,7,5,2,3,'#243028');px(ox,5,3,2,5,'#243028');
+  px(ox,3,3,1,2,'#2e3e32');px(ox,5,2,1,2,'#2e3e32');
+  px(ox,5,11,2,1,'#3a5040');px(ox,4,12,4,1,'#3a5040');px(ox,5,13,2,1,'#3a5040');
+}, 12*P/2, 22*P);
+
+const sprCrystal = makeSprite(14,14,ox=>{
+  px(ox,5,2,3,10,'#3a7a6a');px(ox,5,1,3,2,'#4a9a8a');px(ox,5,2,1,8,'#4a9a8a');
+  px(ox,2,5,3,7,'#2d6058');px(ox,2,4,2,2,'#3a7a6a');px(ox,2,5,1,5,'#3a7a6a');
+  px(ox,8,6,3,6,'#2d6058');px(ox,9,5,2,2,'#3a7a6a');
+  px(ox,10,8,2,4,'#244a42');px(ox,10,7,2,2,'#2d6058');
+  px(ox,2,11,9,2,'#1e3530');px(ox,1,12,11,1,'#18282a');
+}, 14*P/2, 14*P);
+
+const SP = { frond:sprFrond, ruin:sprRuin, crystal:sprCrystal };
+
+const SPRITE_PLACEMENTS = [
+  {col:4,row:3,sprite:'frond',  anchorDC:0,anchorDR:0},
+  {col:7,row:5,sprite:'frond',  anchorDC:0,anchorDR:0},
+  {col:3,row:6,sprite:'frond',  anchorDC:0,anchorDR:0},
+  {col:8,row:3,sprite:'crystal',anchorDC:0,anchorDR:0},
+  {col:6,row:7,sprite:'ruin',   anchorDC:0,anchorDR:0},
+];
+
+// ── CREATURE SPRITES ──────────────────────────────────────────────────────────
+function makeCreatureFrame(type, frame) {
+  if (type === 'crawler') {
+    return makeSprite(12,7,ox=>{
+      const B='#3a3020',D='#2a2010',E='#c8a03a',S='#1e180a';
+      px(ox,1,0,10,1,D); px(ox,0,1,12,3,B); px(ox,1,4,10,1,D);
+      px(ox,2,1,1,1,E);  px(ox,9,1,1,1,E);
+      px(ox,1,1,1,2,'#4a4030'); px(ox,10,1,1,2,'#4a4030');
+      if (frame===0) {
+        px(ox,0,4,2,1,D); px(ox,5,4,2,1,D); px(ox,10,4,2,1,D);
+        px(ox,0,5,1,1,S); px(ox,3,5,1,1,S); px(ox,5,5,1,1,S); px(ox,8,5,1,1,S); px(ox,11,5,1,1,S);
+      } else {
+        px(ox,1,4,2,1,D); px(ox,5,4,2,1,D); px(ox,9,4,2,1,D);
+        px(ox,1,5,1,1,S); px(ox,4,5,1,1,S); px(ox,7,5,1,1,S); px(ox,10,5,1,1,S);
+      }
+    }, 12*P/2, 7*P);
+  } else {
+    return makeSprite(8,10,ox=>{
+      const B='#2e3a28',D='#1e2a1c',E='#c8a03a',S='#181e14';
+      px(ox,2,1,4,1,D); px(ox,1,2,6,4,B); px(ox,2,6,4,2,D);
+      px(ox,2,2,1,1,E); px(ox,5,2,1,1,E);
+      px(ox,2,2,1,3,'#3a4a34');
+      if (frame===0) {
+        px(ox,2,7,2,2,D); px(ox,5,7,2,2,D);
+        px(ox,1,8,2,1,S); px(ox,5,8,2,1,S);
+      } else {
+        px(ox,1,7,2,2,D); px(ox,5,7,2,2,D);
+        px(ox,0,8,2,1,S); px(ox,5,8,3,1,S);
+        px(ox,1,1,6,4,B); px(ox,2,1,4,1,D);
+      }
+    }, 8*P/2, 10*P);
+  }
+}
+const CREATURE_SPRITES = {
+  crawler: [makeCreatureFrame('crawler',0), makeCreatureFrame('crawler',1)],
+  hopper:  [makeCreatureFrame('hopper', 0), makeCreatureFrame('hopper', 1)],
+};
+
+// ── CREATURE STATE ────────────────────────────────────────────────────────────
+const CREATURES = [];
+function spawnCreatures() {
+  const types = ['crawler','crawler','crawler','hopper','hopper','crawler','hopper','crawler'];
+  types.forEach((type, i) => {
+    const col = 2 + Math.floor(Math.random() * 9);
+    const row = 1 + Math.floor(Math.random() * 9);
+    CREATURES.push({ col, row, targetCol:col, targetRow:row, t:1,
+      waitFrames:Math.floor(Math.random()*80), animFrame:i%2,
+      animTimer:Math.floor(Math.random()*10),
+      speed:0.012+Math.random()*0.016, type, flipX:Math.random()<0.5 });
+  });
+}
+spawnCreatures();
+
+const DIRS = [{dc:1,dr:0},{dc:-1,dr:0},{dc:0,dr:1},{dc:0,dr:-1}];
+function shuffled(arr){const a=arr.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+
+function updateCreatures() {
+  CREATURES.forEach(cr => {
+    if (cr.t < 1) { cr.animTimer++; if(cr.animTimer>=9){cr.animTimer=0;cr.animFrame=1-cr.animFrame;} }
+    if (cr.t < 1) { cr.t=Math.min(1,cr.t+cr.speed); if(cr.t>=1)cr.waitFrames=15+Math.floor(Math.random()*50); }
+    else if (cr.waitFrames > 0) { cr.waitFrames--; cr.animFrame=0; }
+    else {
+      cr.col=cr.targetCol; cr.row=cr.targetRow;
+      let moved=false;
+      for(const{dc,dr}of shuffled(DIRS)){
+        const nc=cr.col+dc,nr=cr.row+dr;
+        if(nc<1||nc>=S-1||nr<1||nr>=S-1)continue;
+        if(Math.abs(TERRAIN[nr][nc]-TERRAIN[cr.row][cr.col])>1)continue;
+        cr.targetCol=nc;cr.targetRow=nr;cr.t=0;cr.flipX=dc>0||(dc===0&&dr<0);moved=true;break;
+      }
+      if(!moved)cr.waitFrames=30;
+    }
+  });
+}
+
+// ── ROTATION ──────────────────────────────────────────────────────────────────
+let rot=0;
+const VIEW_LABEL=['NE','SE','SW','NW'];
+function rawElev(c,r){const e=TERRAIN;switch(rot){case 0:return e[r][c];case 1:return e[c][S-1-r];case 2:return e[S-1-r][S-1-c];case 3:return e[S-1-c][r];}}
+function elev(c,r){if(c<0||c>=S||r<0||r>=S)return 0;return rawElev(c,r);}
+function transformCoord(c,r){switch(rot){case 0:return{c,r};case 1:return{c:r,r:S-1-c};case 2:return{c:S-1-c,r:S-1-r};case 3:return{c:S-1-r,r:c};}}
+function inverseTransform(dc,dr){switch(rot){case 0:return{c:dc,r:dr};case 1:return{c:S-1-dr,r:dc};case 2:return{c:S-1-dc,r:S-1-dr};case 3:return{c:dr,r:S-1-dc};}}
+function transformFloat(fc,fr){switch(rot){case 0:return{c:fc,r:fr};case 1:return{c:fr,r:S-1-fc};case 2:return{c:S-1-fc,r:S-1-fr};case 3:return{c:S-1-fr,r:fc};}}
+
+// ── CAMERA ────────────────────────────────────────────────────────────────────
+let camX=W/2,camY=H/2-(S/2+S/2)*(TH/2),cvx=0,cvy=0;
+const keys={};
+document.addEventListener('keydown',e=>{keys[e.key]=true;if(e.key==='q'||e.key==='Q'){doRotate(-1);}if(e.key==='e'||e.key==='E'){doRotate(1);}});
+document.addEventListener('keyup',e=>{keys[e.key]=false;});
+function updateCamera(){
+  if(keys['w']||keys['W']||keys['ArrowUp'])cvy+=3.2;if(keys['s']||keys['S']||keys['ArrowDown'])cvy-=3.2;
+  if(keys['a']||keys['A']||keys['ArrowLeft'])cvx+=3.2;if(keys['d']||keys['D']||keys['ArrowRight'])cvx-=3.2;
+  cvx*=.80;cvy*=.80;camX+=cvx;camY+=cvy;
+}
+
+function doRotate(dir) {
+  rot = (rot + 4 + dir) % 4;
+  flashAlpha = .3;
+  document.getElementById('viewlabel').textContent = `VIEW: ${VIEW_LABEL[rot]} — TAP to reveal`;
+}
+
+// ── TOUCH INPUT ───────────────────────────────────────────────────────────────
+let touchLastX = 0, touchLastY = 0, touchMoved = false;
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (e.touches.length === 1) {
+    touchLastX = e.touches[0].clientX;
+    touchLastY = e.touches[0].clientY;
+    touchMoved = false;
+    cvx = 0; cvy = 0;
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (e.touches.length === 1) {
+    const dx = e.touches[0].clientX - touchLastX;
+    const dy = e.touches[0].clientY - touchLastY;
+    camX += dx; camY += dy;
+    cvx = dx; cvy = dy;
+    touchLastX = e.touches[0].clientX;
+    touchLastY = e.touches[0].clientY;
+    if (Math.abs(dx) + Math.abs(dy) > 4) touchMoved = true;
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (!touchMoved && e.changedTouches.length === 1) {
+    const t = e.changedTouches[0];
+    const {c:dc,r:dr} = screenToTile(t.clientX, t.clientY);
+    const {c:bc,r:br} = inverseTransform(dc, dr);
+    revealRadius(bc, br, 2);
+  }
+}, { passive: false });
+
+document.getElementById('btn-ccw').addEventListener('click', () => doRotate(-1));
+document.getElementById('btn-cw') .addEventListener('click', () => doRotate( 1));
+function projectF(fc,fr,fe){return{x:camX+(fc-fr)*(TW/2),y:camY+(fc+fr)*(TH/2)-fe*BH};}
+
+// ── HIT TEST ──────────────────────────────────────────────────────────────────
+function screenToTile(mx,my){
+  const dx=mx-camX,dy=my-camY,gc=Math.floor(dx/TW+dy/TH),gr=Math.floor(dy/TH-dx/TW);
+  let best=null,bestSum=-1;
+  for(let dc=-1;dc<=2;dc++)for(let dr=-1;dr<=2;dr++){
+    const c=gc+dc,r=gr+dr;if(c<0||c>=S||r<0||r>=S)continue;
+    const e=elev(c,r),p=projectF(c,r,e);
+    if(Math.abs(mx-p.x)/(TW/2)+Math.abs(my-p.y)/(TH/2)<=1&&(c+r)>bestSum){best={c,r};bestSum=c+r;}
+  }
+  return best||{c:gc,r:gr};
+}
+canvas.addEventListener('click',e=>{
+  const rect=canvas.getBoundingClientRect(),{c:dc,r:dr}=screenToTile(e.clientX-rect.left,e.clientY-rect.top);
+  const{c:bc,r:br}=inverseTransform(dc,dr);revealRadius(bc,br,2);
+});
+
+// ── LAVA FLOW ─────────────────────────────────────────────────────────────────
+// Logical-space tile positions that form a lava flow. These tiles glow molten
+// amber and are the sources of localised heat shimmer.
+const LAVA_TILES = [
+  // Main pool
+  {c:14,r:10},{c:15,r:10},{c:15,r:11},{c:16,r:11},{c:16,r:12},{c:15,r:12},
+  // Narrow fissure — NE of map, diagonal crack
+  {c:24,r:6},{c:25,r:7},{c:26,r:7},{c:26,r:8},
+  // Small vent pool — western side
+  {c:7,r:20},{c:8,r:20},{c:8,r:21},
+  // Long thin fissure — centre-south, runs col-wise
+  {c:19,r:22},{c:20,r:22},{c:20,r:23},{c:21,r:23},{c:21,r:24},
+  // Isolated vent — far corner
+  {c:32,r:28},{c:33,r:28},
+];
+const lavaSet = new Set(LAVA_TILES.map(t=>`${t.c},${t.r}`));
+// Reveal lava area at start
+LAVA_TILES.forEach(t => revealRadius(t.c, t.r, 2));
+
+let lavaTime = 0;  // drives the molten glow pulse
+
+// ── COLOUR ────────────────────────────────────────────────────────────────────
+function hexRgb(h){const n=parseInt(h.slice(1),16);return[(n>>16)&255,(n>>8)&255,n&255];}
+function rgbHex(r,g,b){return'#'+[r,g,b].map(v=>Math.max(0,Math.min(255,v)).toString(16).padStart(2,'0')).join('');}
+function fogTopColour(c,r){const e=elev(c,r),n=((c*5+r*11+c*r*3)%5)-2;const[R,G,B]=hexRgb(PAL.fog[e]);return rgbHex(R+n*2,G+n*2,B+n*2);}
+
+// ── DRAW TILE ─────────────────────────────────────────────────────────────────
+function drawTile(c,r){
+  const{c:bc,r:br}=inverseTransform(c,r),revealed=revealProgress[br][bc];
+  const isLava = lavaSet.has(`${bc},${br}`);
+  const e=elev(c,r),p=projectF(c,r,e),hw=TW/2,hh=TH/2,sH=e*BH+BASE_SIDE;
+  if(p.x+hw<-20||p.x-hw>W+20||p.y+hh+sH<-20||p.y-hh>H+60)return;
+
+  ctx.beginPath();ctx.moveTo(p.x,p.y-hh);ctx.lineTo(p.x+hw,p.y);ctx.lineTo(p.x,p.y+hh);ctx.lineTo(p.x-hw,p.y);ctx.closePath();
+
+  if (isLava) {
+    // Lava is forced to elevation 0 so it sits depressed below surrounding terrain.
+    // Re-project at e=0 so the diamond is at ground level.
+    const lp  = projectF(c, r, 0);
+    const lsH = BASE_SIDE; // no elevation, just the minimal base
+
+    // Rebuild the ground-level diamond path
+    ctx.beginPath();
+    ctx.moveTo(lp.x, lp.y - hh);
+    ctx.lineTo(lp.x + hw, lp.y);
+    ctx.lineTo(lp.x, lp.y + hh);
+    ctx.lineTo(lp.x - hw, lp.y);
+    ctx.closePath();
+
+    // Smooth liquid surface — animated hotspot drifts slowly across the pool
+    const hotX = lp.x + Math.sin(lavaTime * 0.7  + bc * 0.8) * hw * 0.35;
+    const hotY = lp.y + Math.cos(lavaTime * 0.55 + br * 0.6) * hh * 0.35;
+    const g = ctx.createRadialGradient(hotX, hotY, 0, lp.x, lp.y, hw * 1.1);
+    const bright = 180 + Math.round(50 * (0.5 + 0.5 * Math.sin(lavaTime * 1.1 + bc + br)));
+    g.addColorStop(0,   `rgb(${bright},${Math.round(bright*0.38)},8)`);
+    g.addColorStop(0.35,`rgb(${Math.round(bright*0.7)},${Math.round(bright*0.18)},4)`);
+    g.addColorStop(0.7, 'rgb(110,22,3)');
+    g.addColorStop(1,   'rgb(55,8,2)');
+    ctx.fillStyle = g;
+    ctx.fill();
+
+    // Subtle specular highlight — small bright oval near hotspot
+    ctx.save(); ctx.clip();
+    const sg = ctx.createRadialGradient(hotX - hw*0.1, hotY - hh*0.15, 0, hotX, hotY, hw * 0.28);
+    sg.addColorStop(0,   `rgba(255,220,120,${0.18 + 0.12 * Math.sin(lavaTime * 1.6)})`);
+    sg.addColorStop(1,   'rgba(255,180,60,0)');
+    ctx.fillStyle = sg; ctx.fill();
+    ctx.restore();
+
+    // Thin dark rim — no grid tick, just a subtle edge
+    ctx.strokeStyle = 'rgba(40,8,2,0.8)'; ctx.lineWidth = 0.8; ctx.stroke();
+
+    // Side faces of the sunken pool — very dark rock walls
+    ctx.beginPath();ctx.moveTo(lp.x-hw,lp.y);ctx.lineTo(lp.x,lp.y+hh);ctx.lineTo(lp.x,lp.y+hh+lsH);ctx.lineTo(lp.x-hw,lp.y+lsH);ctx.closePath();
+    ctx.fillStyle='#150402';ctx.fill();
+    ctx.beginPath();ctx.moveTo(lp.x+hw,lp.y);ctx.lineTo(lp.x,lp.y+hh);ctx.lineTo(lp.x,lp.y+hh+lsH);ctx.lineTo(lp.x+hw,lp.y+lsH);ctx.closePath();
+    ctx.fillStyle='#0e0301';ctx.fill();
+
+    // Ambient glow spill upward onto surrounding tiles
+    const glowR = ctx.createRadialGradient(lp.x, lp.y - hh, 0, lp.x, lp.y, TW * 1.1);
+    glowR.addColorStop(0, `rgba(220,80,8,${0.13 + 0.06 * Math.sin(lavaTime + bc)})`);
+    glowR.addColorStop(1, 'rgba(180,40,4,0)');
+    ctx.fillStyle = glowR;
+    ctx.fillRect(lp.x - TW, lp.y - TH * 1.5, TW * 2, TH * 3);
+
+  } else {
+    ctx.fillStyle=fogTopColour(c,r);ctx.fill();
+    if(revealed>0){ctx.save();ctx.clip();ctx.globalAlpha=revealed;ctx.drawImage(generateTexture(bc,br),p.x-hw,p.y-hh);ctx.globalAlpha=1;ctx.restore();}
+    ctx.strokeStyle=revealed>.5?PAL.gridExp:PAL.grid;ctx.lineWidth=.7;ctx.stroke();
+
+    ctx.beginPath();ctx.moveTo(p.x-hw,p.y);ctx.lineTo(p.x,p.y+hh);ctx.lineTo(p.x,p.y+hh+sH);ctx.lineTo(p.x-hw,p.y+sH);ctx.closePath();
+    ctx.fillStyle=PAL.fogL[e];ctx.fill();ctx.strokeStyle=PAL.grid;ctx.lineWidth=.5;ctx.stroke();
+    ctx.beginPath();ctx.moveTo(p.x+hw,p.y);ctx.lineTo(p.x,p.y+hh);ctx.lineTo(p.x,p.y+hh+sH);ctx.lineTo(p.x+hw,p.y+sH);ctx.closePath();
+    ctx.fillStyle=PAL.fogR[e];ctx.fill();ctx.strokeStyle=PAL.grid;ctx.lineWidth=.5;ctx.stroke();
+
+    if(e>0){
+      if(elev(c-1,r)<e){ctx.beginPath();ctx.moveTo(p.x-hw,p.y);ctx.lineTo(p.x,p.y-hh);ctx.strokeStyle='rgba(80,140,110,0.18)';ctx.lineWidth=1;ctx.stroke();}
+      if(elev(c,r-1)<e){ctx.beginPath();ctx.moveTo(p.x,p.y-hh);ctx.lineTo(p.x+hw,p.y);ctx.strokeStyle='rgba(80,140,110,0.12)';ctx.lineWidth=1;ctx.stroke();}
+    }
+  }
+}
+
+// ── DRAW STATIC SPRITE ────────────────────────────────────────────────────────
+function drawSprite(sp,dc,dr){
+  const{c:bc,r:br}=inverseTransform(dc,dr),revealed=revealProgress[br][bc];
+  if(revealed<.05)return;
+  const def=SP[sp.sprite];if(!def)return;
+  const e=elev(dc,dr),p=projectF(dc,dr,e);
+  ctx.globalAlpha=Math.min(1,revealed*1.4);
+  ctx.drawImage(def.canvas,p.x-def.anchorX,p.y-def.anchorY);
+  ctx.globalAlpha=1;
+}
+
+// ── DRAW CREATURE ─────────────────────────────────────────────────────────────
+function drawCreature(cr) {
+  const ic=cr.col+(cr.targetCol-cr.col)*cr.t, ir=cr.row+(cr.targetRow-cr.row)*cr.t;
+  const tc=Math.round(ic), tr=Math.round(ir);
+  if(tc<0||tc>=S||tr<0||tr>=S)return;
+  const revealed=revealProgress[tr][tc];
+  if(revealed<0.05)return;
+  const e1=TERRAIN[cr.row]?.[cr.col]??0, e2=TERRAIN[cr.targetRow]?.[cr.targetCol]??0;
+  const ie=e1+(e2-e1)*cr.t;
+  const{c:dc,r:dr}=transformFloat(ic,ir);
+  const p=projectF(dc,dr,ie);
+  const frames=CREATURE_SPRITES[cr.type], frame=frames[cr.animFrame];
+  ctx.globalAlpha=Math.min(1,revealed*1.5);
+  if(cr.flipX){ctx.save();ctx.scale(-1,1);ctx.drawImage(frame.canvas,-(p.x+frame.anchorX),p.y-frame.anchorY);ctx.restore();}
+  else ctx.drawImage(frame.canvas,p.x-frame.anchorX,p.y-frame.anchorY);
+  ctx.globalAlpha=1;
+}
+
+// ── DUST PARTICLES ────────────────────────────────────────────────────────────
+// Particles live in world tile-space (wx, wy, wz) and are projected through the
+// isometric camera each frame, so they drift across the terrain and pan with it.
+// wz = height above ground in tile-elevation units (fractional).
+
+const DUST_COUNT = 80;
+const dust = [];
+
+let windAngle = 0.55;  // world-space radians for drift direction
+let windSpeed = 0.022; // tile units per frame
+let windTimer = 0;
+
+function makeDustParticle(randomPos) {
+  const flake = Math.random() < 0.20;
+  // Scatter across the full map bounds
+  const wx = randomPos ? Math.random() * S : (windAngle > 0 ? 0 : S);
+  const wy = randomPos ? Math.random() * S : Math.random() * S;
+  const wz = (flake ? 0.3 : 0.05) + Math.random() * (flake ? 0.5 : 0.25);
+  return {
+    wx, wy, wz,
+    // Per-particle wobble so they don't march in lockstep
+    drift:  (Math.random() - 0.5) * 0.008,
+    bob:    Math.random() * Math.PI * 2,
+    bobAmp: flake ? 0.004 + Math.random() * 0.004 : 0.001 + Math.random() * 0.002,
+    speed:  flake ? 0.55 + Math.random() * 0.3 : 0.8 + Math.random() * 0.6,
+    size:   flake ? 1.6 + Math.random() * 1.2 : 0.7 + Math.random() * 0.8,
+    alpha:  flake ? 0.12 + Math.random() * 0.13 : 0.20 + Math.random() * 0.20,
+    colour: Math.random() < 0.45 ? 'rgba(190,145,55,' :
+            Math.random() < 0.5  ? 'rgba(160,175,148,' : 'rgba(130,148,125,',
+    flake,
+  };
+}
+
+for (let i = 0; i < DUST_COUNT; i++) dust.push(makeDustParticle(true));
+
+function updateDust() {
+  windTimer++;
+  if (windTimer % 300 === 0) {
+    windAngle += (Math.random() - 0.5) * 0.35;
+    windSpeed  = 0.015 + Math.random() * 0.018;
+  }
+  const gust = windSpeed * (1 + 0.12 * Math.sin(windTimer * 0.008));
+  // Wind in world tile-space: col axis and row axis
+  const wdx = Math.cos(windAngle) * gust;
+  const wdy = Math.sin(windAngle) * gust;
+
+  dust.forEach(p => {
+    p.bob += 0.028;
+    p.wx += (wdx + p.drift) * p.speed;
+    p.wy += (wdy + p.drift * 0.5) * p.speed;
+    p.wz += Math.sin(p.bob) * p.bobAmp;
+    p.wz  = Math.max(0.02, p.wz);
+
+    // Wrap within map bounds
+    if (p.wx > S + 2)  p.wx -= S + 4;
+    if (p.wx < -2)     p.wx += S + 4;
+    if (p.wy > S + 2)  p.wy -= S + 4;
+    if (p.wy < -2)     p.wy += S + 4;
+  });
+}
+
+function drawDust() {
+  dust.forEach(p => {
+    // Project world position through isometric camera
+    const sx = camX + (p.wx - p.wy) * (TW / 2);
+    const sy = camY + (p.wx + p.wy) * (TH / 2) - p.wz * BH;
+    if (sx < -4 || sx > W + 4 || sy < -4 || sy > H + 4) return;
+
+    ctx.fillStyle = p.colour + p.alpha + ')';
+    if (p.flake) {
+      ctx.save();
+      ctx.translate(sx, sy);
+      // Rotate elongated flake in screen-space wind direction
+      const screenAngle = Math.atan2(
+        Math.sin(windAngle) * (TH/2) - Math.cos(windAngle) * (TH/2),
+        Math.cos(windAngle) * (TW/2) + Math.sin(windAngle) * (TW/2)
+      );
+      ctx.rotate(screenAngle);
+      ctx.fillRect(-p.size * 1.8, -p.size * 0.4, p.size * 3.6, p.size * 0.8);
+      ctx.restore();
+    } else {
+      ctx.beginPath();
+      ctx.arc(sx, sy, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+}
+
+// ── HEAT SHIMMER ──────────────────────────────────────────────────────────────
+const shimmerCanvas = new OffscreenCanvas(W, H);
+const shimmerCtx    = shimmerCanvas.getContext('2d');
+
+let shimmerTime = 0;
+const SHIMMER_STRIP  = 4;
+const SHIMMER_AMP    = 3.2;
+const HEAT_RISE      = 110;  // px above tile surface that shimmer reaches
+
+function applyLocalShimmer() {
+  shimmerTime += 0.026;
+
+  // Build screen-space heat columns from lava tile positions
+  const columns = LAVA_TILES.map(({c:lc, r:lr}) => {
+    const {c:dc, r:dr} = transformCoord(lc, lr);
+    if (dc < 0 || dc >= S || dr < 0 || dr >= S) return null;
+    const p = projectF(dc, dr, 0); // lava sits at elevation 0
+    return {
+      cx:   p.x,
+      topY: p.y - TH/2 - HEAT_RISE,  // top of shimmer column
+      botY: p.y + TH/2,               // bottom (tile equator)
+    };
+  }).filter(Boolean);
+
+  if (columns.length === 0) return;
+
+  // Snapshot the clean scene
+  shimmerCtx.clearRect(0, 0, W, H);
+  shimmerCtx.drawImage(canvas, 0, 0);
+  // Restore the snapshot to canvas — shimmer strips will be painted on top
+  ctx.drawImage(shimmerCanvas, 0, 0);
+
+  for (let sy = 0; sy < H; sy += SHIMMER_STRIP) {
+    for (const col of columns) {
+      if (sy < col.topY || sy > col.botY) continue;
+
+      const progress = (col.botY - sy) / (col.botY - col.topY);
+      const envelope = Math.sin(progress * Math.PI);
+      const halfW = (TW / 2) * (0.3 + 0.7 * (1 - progress * 0.5));
+      const x1 = Math.max(0, Math.round(col.cx - halfW));
+      const x2 = Math.min(W, Math.round(col.cx + halfW));
+      const segW = x2 - x1;
+      if (segW <= 0) continue;
+
+      const offset = (
+        Math.sin(sy * 0.022 + shimmerTime + col.cx * 0.01)             * SHIMMER_AMP * 0.65 +
+        Math.sin(sy * 0.055 + shimmerTime * 1.8 + col.cx * 0.02 + 1.3) * SHIMMER_AMP * 0.35
+      ) * envelope;
+
+      // Draw shifted strip from snapshot — overwrites clean baseline with displaced version
+      ctx.drawImage(shimmerCanvas, x1, sy, segW, SHIMMER_STRIP, x1 + offset, sy, segW, SHIMMER_STRIP);
+    }
+  }
+}
+
+// ── HUD / ATMOSPHERE ──────────────────────────────────────────────────────────
+function drawHUD(){
+  // HUD is handled by HTML overlay on mobile — nothing to draw here
+}
+function drawAtmosphere(){
+  const vg=ctx.createRadialGradient(W/2,H*.55,H*.15,W/2,H*.55,H*.78);
+  vg.addColorStop(0,'transparent');vg.addColorStop(1,'rgba(4,9,7,0.72)');ctx.fillStyle=vg;ctx.fillRect(0,0,W,H);
+  const hz=ctx.createLinearGradient(0,0,0,H*.42);
+  hz.addColorStop(0,'rgba(14,44,34,0.26)');hz.addColorStop(1,'transparent');ctx.fillStyle=hz;ctx.fillRect(0,0,W,H);
+}
+
+// ── RENDER ORDER ─────────────────────────────────────────────────────────────
+const RENDER_ORDER=[];
+for(let sum=0;sum<=(S-1)*2;sum++)for(let c=0;c<S;c++){const r=sum-c;if(r>=0&&r<S)RENDER_ORDER.push({c,r});}
+
+function sortedCreatures(){
+  return CREATURES.map(cr=>{
+    const ic=cr.col+(cr.targetCol-cr.col)*cr.t, ir=cr.row+(cr.targetRow-cr.row)*cr.t;
+    const{c:dc,r:dr}=transformFloat(ic,ir);
+    return{cr,key:Math.floor(dc+dr)};
+  });
+}
+
+// ── MAIN LOOP ─────────────────────────────────────────────────────────────────
+let flashAlpha=0;
+
+function buildSpriteLookup(){
+  const sprites={};
+  SPRITE_PLACEMENTS.forEach(sp=>{
+    const ac=sp.col+sp.anchorDC, ar=sp.row+sp.anchorDR;
+    const{c,r}=transformCoord(ac,ar);sprites[`${c},${r}`]=sp;
+  });
+  return sprites;
+}
+
+function frame(){
+  updateCamera();
+  updateCreatures();
+  updateDust();
+  lavaTime += 0.045;
+
+  for(let r=0;r<S;r++)for(let c=0;c<S;c++)if(revealProgress[r][c]>0&&revealProgress[r][c]<1)revealProgress[r][c]=Math.min(1,revealProgress[r][c]+.035);
+
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle=PAL.sky;ctx.fillRect(0,0,W,H);
+
+  const sprites = buildSpriteLookup();
+
+  // Pass 1: all tile geometry
+  RENDER_ORDER.forEach(({c,r}) => drawTile(c,r));
+
+  // Pass 2: sprites + creatures merged by depth
+  const pass2 = [];
+  RENDER_ORDER.forEach(({c,r}) => {
+    const sp=sprites[`${c},${r}`];
+    if(sp) pass2.push({key:c+r, drawFn:()=>drawSprite(sp,c,r)});
+  });
+  sortedCreatures().forEach(({cr})=>{
+    const ic=cr.col+(cr.targetCol-cr.col)*cr.t, ir=cr.row+(cr.targetRow-cr.row)*cr.t;
+    const{c:dc,r:dr}=transformFloat(ic,ir);
+    pass2.push({key:Math.floor(dc+dr), drawFn:()=>drawCreature(cr)});
+  });
+  pass2.sort((a,b)=>a.key-b.key);
+  pass2.forEach(({drawFn})=>drawFn());
+
+  drawAtmosphere();
+
+  // Localised heat shimmer rising from lava tiles — applied before dust
+  applyLocalShimmer();
+
+  // Dust on top of everything, drifting over terrain and creatures
+  drawDust();
+
+  if(flashAlpha>0){ctx.fillStyle=`rgba(20,80,60,${flashAlpha})`;ctx.fillRect(0,0,W,H);flashAlpha=Math.max(0,flashAlpha-.04);}
+  drawHUD();
+  requestAnimationFrame(frame);
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
